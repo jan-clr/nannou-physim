@@ -2,11 +2,16 @@ extern crate nannou;
 
 use nannou::prelude::*;
 use nannou::geom::rect::Rect as Rect;
+use nannou_egui::{self, egui, Egui};
+
+
+const WIDTH: f32 = 1920.0;
+const HEIGHT: f32 = 1080.0;
+
 
 fn main() {
     nannou::app(model)
         .update(update)
-        .simple_window(view)
         .run();
 }
 
@@ -25,9 +30,21 @@ struct Model {
     source_radius: f32,
     gravitational_constant: f32,
     previous_positions: Vec<(f32, f32)>,
+    egui: Egui,
+    paused: bool,
 }
 
 fn model(_app: &App) -> Model {
+    let window_id = _app
+        .new_window()
+        .size(WIDTH as u32, HEIGHT as u32)
+        .view(view)
+        .raw_event(raw_window_event)
+        .build()
+        .unwrap();
+
+    let window = _app.window(window_id).unwrap();
+    let egui = Egui::from_window(&window);
     let density = 1.0;
     let radius = 400.0;
     Model {
@@ -46,21 +63,60 @@ fn model(_app: &App) -> Model {
         source_radius: radius,
         gravitational_constant: 5.0,
         previous_positions: Vec::new(),
+        egui,
+        paused: false,
     }
 }
 
+fn raw_window_event(_app: &App, model: &mut Model, event: &nannou::winit::event::WindowEvent) {
+    model.egui.handle_raw_event(event);
+}
+
 fn update(_app: &App, _model: &mut Model, _update: Update) {
+    
     let steps_per_update = 10;
     let delta = 0.05;
-    // save up to 100 previous positions
-    _model.previous_positions.push((_model.particle_x, _model.particle_y));
-    if _model.previous_positions.len() > 100 {
-        _model.previous_positions.remove(0);
+    if !_model.paused {
+
+        // save up to 100 previous positions
+        _model.previous_positions.push((_model.particle_x, _model.particle_y));
+        if _model.previous_positions.len() > 100 {
+            _model.previous_positions.remove(0);
+        }
+
+        for _ in 0..steps_per_update {
+            integration_step(_model, delta);
+        }
     }
     
-    for _ in 0..steps_per_update {
-        integration_step(_model, delta);
-    }
+    let egui = &mut _model.egui;
+    egui.set_elapsed_time(_update.since_start);
+    let ctx = egui.begin_frame();
+
+    egui::Window::new("Settings").show(&ctx, |ui| {
+        ui.label("Particle mass:");
+        ui.add(egui::Slider::new(&mut _model.particle_mass, 0.1..=10.0));
+        
+        ui.label("Central body density:");
+        ui.add(egui::Slider::new(&mut _model.source_density, 0.1..=10.0));
+        
+        ui.label("Central body radius:");
+        ui.add(egui::Slider::new(&mut _model.source_radius, 10.0..=1000.0));
+        
+        ui.label("Gravitational constant:");
+        ui.add(egui::Slider::new(&mut _model.gravitational_constant, 0.1..=10.0));
+        
+        if _model.paused {
+            if ui.button("Play").clicked() {
+                _model.paused = false;
+            }
+        } else {
+            if ui.button("Pause").clicked() {
+                _model.paused = true;
+            }
+        }
+    });
+    _model.source_mass = _model.source_density * _model.source_radius * _model.source_radius * PI;
 }
 
 fn integration_step(_model: &mut Model, delta: f32) {
@@ -123,9 +179,10 @@ fn view(_app: &App, _model: &Model, frame: Frame){
     draw_particle(&draw, _model);
     draw_accelaration(&draw, _model);
     draw_trace(&draw, _model);
-    println!("Distance: {}", (_model.particle_x * _model.particle_x + _model.particle_y * _model.particle_y).sqrt());
+    //println!("Distance: {}", (_model.particle_x * _model.particle_x + _model.particle_y * _model.particle_y).sqrt());
 
     draw.to_frame(_app, &frame).unwrap();
+    _model.egui.draw_to_frame(&frame).unwrap();
 }
 
 fn draw_central_body(draw: &Draw, _model: &Model){
